@@ -13,15 +13,26 @@ from django.db.models import Max, Q
 client = OpenAI(api_key=settings.OPENAI_API_KEY)
 
 class OfferViewSet(viewsets.ModelViewSet):
+    """
+    ViewSet for managing product/offer information.
+    Provides CRUD operations for offers with value propositions and ideal use cases.
+    """
     queryset = Offer.objects.all()
     serializer_class = OfferSerializer
 
 class LeadViewSet(viewsets.ModelViewSet):
+    """
+    ViewSet for managing leads and scoring operations.
+    Handles lead upload, scoring (rule-based + AI), and results retrieval.
+    """
     queryset = Lead.objects.all()
     serializer_class = LeadSerializer
 
     def _get_unique_leads(self, scored_only=False):
-        """Helper to get unique leads by company and name"""
+        """
+        Helper to get unique leads by company and name.
+        Prevents duplicate scoring of the same lead.
+        """
         base_query = Lead.objects.all()
         if scored_only:
             base_query = base_query.filter(score__isnull=False)
@@ -35,7 +46,10 @@ class LeadViewSet(viewsets.ModelViewSet):
 
     @action(detail=False, methods=['get'])
     def results(self, request):
-        """Get scored leads with pagination"""
+        """
+        Get scored leads with pagination.
+        Returns only leads that have been scored, ordered by score (highest first).
+        """
         try:
             leads = self._get_unique_leads(scored_only=True).order_by('-score', 'company', 'name')
             page = self.paginate_queryset(leads)
@@ -49,7 +63,10 @@ class LeadViewSet(viewsets.ModelViewSet):
 
     @action(detail=False, methods=['post'])
     def upload(self, request):
-        """Upload leads from CSV file"""
+        """
+        Upload leads from CSV file.
+        Expected columns: name, role, company, industry, location, linkedin_bio
+        """
         try:
             if 'file' not in request.FILES:
                 return Response({'error': 'No file provided'}, status=400)
@@ -75,11 +92,14 @@ class LeadViewSet(viewsets.ModelViewSet):
             )
 
     def _score_lead_with_rules(self, lead):
-        """Fallback rule-based scoring"""
+        """
+        Fallback rule-based scoring when AI is unavailable.
+        Uses role seniority, industry match, and bio analysis to calculate score.
+        """
         score = 0
         reasoning = []
         
-        # Role scoring
+        # Role scoring - decision makers get higher scores
         role_lower = lead.role.lower()
         if any(title in role_lower for title in ['ceo', 'founder', 'owner']):
             score += 35
@@ -91,7 +111,7 @@ class LeadViewSet(viewsets.ModelViewSet):
             score += 15
             reasoning.append("Team manager")
             
-        # Industry scoring
+        # Industry scoring - prioritize SaaS and tech
         industry_lower = lead.industry.lower()
         if 'saas' in industry_lower or 'software' in industry_lower:
             score += 35
@@ -100,7 +120,7 @@ class LeadViewSet(viewsets.ModelViewSet):
             score += 25
             reasoning.append("Related industry")
             
-        # Bio scoring
+        # Bio analysis - look for relevant keywords
         if lead.linkedin_bio:
             bio_lower = lead.linkedin_bio.lower()
             if any(term in bio_lower for term in ['saas', 'software', 'technology']):
@@ -114,15 +134,23 @@ class LeadViewSet(viewsets.ModelViewSet):
 
     @action(detail=False, methods=['post'])
     def score(self, request):
+        """
+        Score all unscored leads using hybrid approach:
+        1. Rule-based scoring (role, industry, completeness)
+        2. AI-based scoring using OpenAI GPT-3.5-Turbo
+        
+        Returns list of scored leads with intent classification (High/Medium/Low).
+        """
         try:
-            # Get only unscored unique leads
+            # Get only unscored unique leads to avoid re-scoring
             leads = self._get_unique_leads().filter(score__isnull=True)
             results = []
             
             for lead in leads:
                 try:
                     if settings.OPENAI_API_KEY:
-                        # Try AI scoring first
+                        # AI Scoring: Use OpenAI to analyze lead profile contextually
+                        # This provides nuanced understanding beyond simple rule matching
                         messages = [{
                             "role": "system",
                             "content": "You are an AI trained to analyze B2B leads and provide a buying intent score and reasoning."
@@ -145,22 +173,24 @@ class LeadViewSet(viewsets.ModelViewSet):
                             """
                         }]
                         
+                        # Call OpenAI API with controlled temperature for consistent results
                         response = client.chat.completions.create(
                             model="gpt-3.5-turbo",
                             messages=messages,
-                            temperature=0.3,
+                            temperature=0.3,  # Low temperature for deterministic results
                             max_tokens=150
                         )
                         
+                        # Parse AI response (format: "score|reasoning")
                         result = response.choices[0].message.content.strip() if response.choices[0].message.content else ""
                         score_str, reasoning = result.split('|')
                         score = int(float(score_str))
                         
                     else:
-                        # Fallback to rule-based scoring
+                        # Fallback to rule-based scoring if no API key configured
                         score, reasoning = self._score_lead_with_rules(lead)
                     
-                    # Set intent based on score
+                    # Classify intent based on score thresholds
                     if score >= 70:
                         intent = "High"
                     elif score >= 40:
@@ -168,6 +198,7 @@ class LeadViewSet(viewsets.ModelViewSet):
                     else:
                         intent = "Low"
                     
+                    # Save results to database
                     lead.score = score
                     lead.intent = intent
                     lead.reasoning = reasoning.strip()
@@ -183,7 +214,7 @@ class LeadViewSet(viewsets.ModelViewSet):
                     })
                     
                 except RateLimitError:
-                    # Fallback to rule-based scoring on API quota error
+                    # Fallback to rule-based scoring on API quota/rate limit error
                     score, reasoning = self._score_lead_with_rules(lead)
                     lead.score = score
                     lead.intent = "High" if score >= 70 else "Medium" if score >= 40 else "Low"
@@ -209,7 +240,10 @@ class LeadViewSet(viewsets.ModelViewSet):
 
     @action(detail=False, methods=['get'])
     def export_csv(self, request):
-        """Export all leads to CSV file"""
+        """
+        Export all leads to CSV file.
+        Bonus feature: Allows downloading scored results for external analysis.
+        """
         leads = Lead.objects.all()
         response = HttpResponse(content_type='text/csv')
         response['Content-Disposition'] = 'attachment; filename="leads_export.csv"'
