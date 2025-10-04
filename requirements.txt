@@ -1,0 +1,10 @@
+Django>=4.2.10
+djangorestframework>=3.14.0
+django-cors-headers>=4.3.0
+python-dotenv>=1.0.0
+requests>=2.31.0
+openai>=0.28.0
+drf-yasg>=1.21.7
+pytest>=7.4.0
+pytest-django>=4.5.2
+coverage>=7.3.0
