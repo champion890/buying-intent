@@ -10,9 +10,17 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 LOGS_DIR = BASE_DIR / 'logs'
 LOGS_DIR.mkdir(exist_ok=True)
 
-SECRET_KEY = 'django-insecure-your-secret-key-here'
-DEBUG = True
-ALLOWED_HOSTS = ['localhost', '127.0.0.1']
+# Updated for production - use environment variables
+SECRET_KEY = os.getenv('SECRET_KEY', 'django-insecure-your-secret-key-here')
+DEBUG = os.getenv('DEBUG', 'True') == 'True'
+
+# Updated ALLOWED_HOSTS for Render deployment
+ALLOWED_HOSTS = [
+    'localhost',
+    '127.0.0.1',
+    'buying-intent.onrender.com',
+    '.onrender.com',  # Allow all Render subdomains
+]
 
 INSTALLED_APPS = [
     'django.contrib.admin',
@@ -65,7 +73,9 @@ TIME_ZONE = 'UTC'
 USE_I18N = True
 USE_TZ = True
 
+# Static files configuration for production
 STATIC_URL = 'static/'
+STATIC_ROOT = BASE_DIR / 'staticfiles'  # Added for production
 MEDIA_URL = '/media/'
 MEDIA_ROOT = BASE_DIR / 'media'
 DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
